@@ -306,3 +306,68 @@
     (ok true)
   )
 )
+
+(define-public (emergency-resume)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts!
+      (>= (- stacks-block-height (var-get last-emergency-action))
+        emergency-cooldown-period
+      )
+      err-cooldown-active
+    )
+    (var-set emergency-paused false)
+    (asserts! (log-event "EMERGENCY_RESUME" contract-owner u0) err-event-error)
+    (ok true)
+  )
+)
+
+(define-public (set-yield-rate (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (<= new-rate basis-points-denominator) err-invalid-amount) ;; Max 100% APY
+    (var-set yield-rate new-rate)
+    (map-set yield-snapshots stacks-block-height {
+      rate: new-rate,
+      total-liquidity: (var-get total-liquidity),
+      timestamp: stacks-block-height,
+    })
+    (asserts! (log-event "YIELD_RATE" contract-owner new-rate) err-event-error)
+    (ok true)
+  )
+)
+
+(define-public (set-pool-parameters
+    (new-min uint)
+    (new-max-per-user uint)
+    (new-max-pool uint)
+  )
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (< new-min new-max-per-user) err-invalid-amount)
+    (asserts! (< new-max-per-user new-max-pool) err-invalid-amount)
+    (var-set min-deposit new-min)
+    (var-set max-deposit-per-user new-max-per-user)
+    (var-set max-pool-size new-max-pool)
+    (asserts! (log-event "PARAMS_UPDATE" contract-owner u0) err-event-error)
+    (ok true)
+  )
+)
+
+(define-public (add-operator (operator principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set authorized-operators operator true)
+    (asserts! (log-event "ADD_OPERATOR" operator u0) err-event-error)
+    (ok true)
+  )
+)
+
+(define-public (remove-operator (operator principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set authorized-operators operator false)
+    (asserts! (log-event "REMOVE_OPERATOR" operator u0) err-event-error)
+    (ok true)
+  )
+)
