@@ -102,3 +102,100 @@
     true
   )
 )
+
+(define-private (calculate-yield
+    (amount uint)
+    (blocks uint)
+  )
+  (let (
+      (rate (var-get yield-rate))
+      (yield-amount (/ (* amount (* rate blocks)) (* blocks-per-year basis-points-denominator)))
+    )
+    yield-amount
+  )
+)
+
+(define-private (update-user-yield (user principal))
+  (let (
+      (user-data (unwrap! (map-get? user-deposits user) (err u0)))
+      (current-height stacks-block-height)
+      (blocks-since-last (- current-height (get last-deposit-height user-data)))
+      (new-yield (calculate-yield (get amount user-data) blocks-since-last))
+    )
+    (map-set user-deposits user {
+      amount: (get amount user-data),
+      last-deposit-height: current-height,
+      accumulated-yield: (+ (get accumulated-yield user-data) new-yield),
+      last-action-height: current-height,
+      total-deposits: (get total-deposits user-data),
+      total-withdrawals: (get total-withdrawals user-data),
+    })
+    (ok true)
+  )
+)
+
+(define-private (check-pool-status)
+  (begin
+    (asserts! (var-get pool-active) err-pool-inactive)
+    (asserts! (not (var-get emergency-paused)) err-paused)
+    (ok true)
+  )
+)
+
+(define-private (validate-deposit-amount (amount uint))
+  (begin
+    (asserts! (>= amount (var-get min-deposit)) err-below-min-deposit)
+    (asserts! (<= (+ (var-get total-liquidity) amount) (var-get max-pool-size))
+      err-pool-full
+    )
+    (ok true)
+  )
+)
+
+(define-private (validate-bool (value bool))
+  (if value
+    (ok true)
+    (ok false)
+  )
+)
+
+;; Public Functions
+
+;; Deposit Function
+(define-public (deposit (amount uint))
+  (let (
+      (user tx-sender)
+      (current-liquidity (var-get total-liquidity))
+      (new-liquidity (+ current-liquidity amount))
+    )
+    (try! (check-pool-status))
+    (try! (validate-deposit-amount amount))
+    (match (map-get? user-deposits user)
+      existing-deposit (let ((new-user-amount (+ amount (get amount existing-deposit))))
+        (asserts! (<= new-user-amount (var-get max-deposit-per-user))
+          err-above-max-deposit
+        )
+        (try! (update-user-yield user))
+        (map-set user-deposits user {
+          amount: new-user-amount,
+          last-deposit-height: stacks-block-height,
+          accumulated-yield: (get accumulated-yield existing-deposit),
+          last-action-height: stacks-block-height,
+          total-deposits: (+ (get total-deposits existing-deposit) amount),
+          total-withdrawals: (get total-withdrawals existing-deposit),
+        })
+      )
+      (map-set user-deposits user {
+        amount: amount,
+        last-deposit-height: stacks-block-height,
+        accumulated-yield: u0,
+        last-action-height: stacks-block-height,
+        total-deposits: amount,
+        total-withdrawals: u0,
+      })
+    )
+    (var-set total-liquidity new-liquidity)
+    (asserts! (log-event "DEPOSIT" user amount) err-event-error)
+    (ok true)
+  )
+)
